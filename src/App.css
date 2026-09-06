@@ -1,0 +1,256 @@
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  background: #1e1f22;
+  color: #e8e8ea;
+}
+
+.app {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+}
+
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 20px;
+  background: #26272b;
+  border-bottom: 1px solid #34353a;
+}
+
+.topbar h1 {
+  font-size: 16px;
+  font-weight: 600;
+  margin: 0;
+}
+
+.main {
+  flex: 1;
+  display: flex;
+  overflow: hidden;
+}
+
+.canvas-area {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  overflow: auto;
+  position: relative;
+}
+
+/* Centered+overflow can make part of a zoomed-in image unreachable by scroll in some
+   browsers, so switch to plain top-left flow while zoomed instead of staying centered. */
+.canvas-area.zoomed {
+  align-items: flex-start;
+  justify-content: flex-start;
+}
+
+.preview-container {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.preview-container.zoomed {
+  display: block;
+}
+
+.preview-inner img {
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+}
+
+.zoom-toolbar {
+  position: fixed;
+  bottom: 20px;
+  left: calc((100% - 280px) / 2);
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: #26272bee;
+  border: 1px solid #45464c;
+  border-radius: 8px;
+  padding: 4px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+}
+
+.zoom-toolbar button {
+  min-width: 32px;
+}
+
+.zoom-toolbar .zoom-label {
+  min-width: 64px;
+  font-variant-numeric: tabular-nums;
+}
+
+.empty-state {
+  text-align: center;
+  color: #8a8b90;
+}
+
+.error-banner {
+  position: absolute;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: #4a1f1f;
+  color: #ffb4b4;
+  padding: 8px 16px;
+  border-radius: 6px;
+  font-size: 13px;
+  max-width: 80%;
+}
+
+.success-banner {
+  position: absolute;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: #1f4a2a;
+  color: #b4ffc4;
+  padding: 8px 16px;
+  border-radius: 6px;
+  font-size: 13px;
+  max-width: 80%;
+  word-break: break-all;
+}
+
+.sidebar {
+  width: 280px;
+  background: #26272b;
+  border-left: 1px solid #34353a;
+  padding: 16px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.sidebar h3 {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #9a9ba1;
+  margin: 0 0 10px 0;
+}
+
+.sidebar section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.slider-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.slider-label {
+  display: flex;
+  justify-content: space-between;
+  font-size: 13px;
+}
+
+.slider-value {
+  color: #9a9ba1;
+}
+
+input[type="range"] {
+  width: 100%;
+  accent-color: #6c8cff;
+}
+
+button {
+  background: #34353a;
+  color: #e8e8ea;
+  border: 1px solid #45464c;
+  border-radius: 6px;
+  padding: 8px 12px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+button:hover:not(:disabled) {
+  background: #3d3e44;
+}
+
+button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+button.secondary {
+  background: transparent;
+}
+
+button.preset {
+  flex: 1;
+}
+
+button.preset.active {
+  background: #6c8cff;
+  border-color: #6c8cff;
+  color: #fff;
+}
+
+.button-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.preset-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.busy-message {
+  font-size: 12px;
+  color: #9a9ba1;
+  margin: 4px 0 0 0;
+}
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+}
+
+.modal {
+  background: #26272b;
+  border: 1px solid #34353a;
+  border-radius: 10px;
+  padding: 24px;
+  width: 320px;
+}
+
+.modal h3 {
+  margin-top: 0;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 12px;
+}
