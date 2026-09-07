@@ -34,6 +34,24 @@ export interface CustomRatio {
   h: number;
 }
 
+/** One open image and everything about how it's currently being edited —
+ * each tab in the tab bar owns one of these, independent of the others. */
+interface DocState {
+  id: string;
+  fileName: string;
+  image: HTMLImageElement;
+  imageSrc: string;
+  adjustments: Adjustments;
+  presetId: string;
+  history: HistoryEntry[];
+  originalFileSize: number | null;
+  zoom: Zoom;
+  cropMode: boolean;
+  pendingCrop: CropRect | null;
+  aspectPreset: AspectPreset;
+  customRatio: CustomRatio;
+}
+
 function ratioForPreset(preset: AspectPreset, custom: CustomRatio): number | null {
   switch (preset) {
     case "free":
@@ -47,42 +65,58 @@ function ratioForPreset(preset: AspectPreset, custom: CustomRatio): number | nul
   }
 }
 
+function newDocId(): string {
+  return typeof crypto.randomUUID === "function"
+    ? crypto.randomUUID()
+    : `doc-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
 export default function App() {
-  const [image, setImage] = useState<HTMLImageElement | null>(null);
-  const [imageSrc, setImageSrc] = useState<string>("");
-  const [adjustments, setAdjustments] = useState<Adjustments>(DEFAULT_ADJUSTMENTS);
-  const [presetId, setPresetId] = useState("none");
-  const [cropMode, setCropMode] = useState(false);
-  const [pendingCrop, setPendingCrop] = useState<CropRect | null>(null);
-  const [aspectPreset, setAspectPreset] = useState<AspectPreset>("free");
-  const [customRatio, setCustomRatio] = useState<CustomRatio>({ w: 4, h: 3 });
+  const [docs, setDocs] = useState<DocState[]>([]);
+  const [activeId, setActiveId] = useState<string | null>(null);
   const [showExport, setShowExport] = useState(false);
   const [busy, setBusy] = useState(false);
   const [busyMessage, setBusyMessage] = useState("");
   const [error, setError] = useState<string | null>(null);
-  const [history, setHistory] = useState<HistoryEntry[]>([]);
   const [saveConfirmation, setSaveConfirmation] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
-  const [originalFileSize, setOriginalFileSize] = useState<number | null>(null);
-  const [zoom, setZoom] = useState<Zoom>("fit");
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const saveConfirmationTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  const active = docs.find((d) => d.id === activeId) ?? null;
+
+  /** Patches the active document immutably. Accepts either a partial patch or a
+   * function of the current doc (for updates that depend on prior values). */
+  const updateActive = useCallback(
+    (patch: Partial<DocState> | ((d: DocState) => Partial<DocState>)) => {
+      setDocs((prev) =>
+        prev.map((d) => {
+          if (d.id !== activeId) return d;
+          const p = typeof patch === "function" ? patch(d) : patch;
+          return { ...d, ...p };
+        })
+      );
+    },
+    [activeId]
+  );
+
   const ZOOM_MIN = 0.1;
   const ZOOM_MAX = 8;
-  const zoomIn = () => setZoom((z) => (z === "fit" ? 1 : Math.min(ZOOM_MAX, z * 1.25)));
-  const zoomOut = () => setZoom((z) => (z === "fit" ? 1 : Math.max(ZOOM_MIN, z / 1.25)));
-  const zoomToFit = () => setZoom("fit");
+  const zoomIn = () =>
+    updateActive((d) => ({ zoom: d.zoom === "fit" ? 1 : Math.min(ZOOM_MAX, d.zoom * 1.25) }));
+  const zoomOut = () =>
+    updateActive((d) => ({ zoom: d.zoom === "fit" ? 1 : Math.max(ZOOM_MIN, d.zoom / 1.25) }));
+  const zoomToFit = () => updateActive({ zoom: "fit" });
 
   const onCanvasWheel = (e: React.WheelEvent) => {
-    if (!(e.ctrlKey || e.metaKey) || cropMode || !image) return;
+    if (!(e.ctrlKey || e.metaKey) || !active || active.cropMode) return;
     e.preventDefault();
     if (e.deltaY < 0) zoomIn();
     else zoomOut();
   };
 
-  const preset = PRESETS.find((p) => p.id === presetId) ?? PRESETS[0];
+  const preset = PRESETS.find((p) => p.id === active?.presetId) ?? PRESETS[0];
 
   /** Selecting a preset sets brightness/contrast/saturation to its exact tuned values
    * (falling back to neutral for anything it doesn't specify) so switching between
@@ -90,144 +124,179 @@ export default function App() {
    * Rotation is untouched since it's a transform, not part of the color grade. */
   const onPresetChange = (id: string) => {
     const next = PRESETS.find((p) => p.id === id) ?? PRESETS[0];
-    setAdjustments((prev) => ({
-      ...DEFAULT_ADJUSTMENTS,
-      rotation: prev.rotation,
-      ...next.adjustments,
+    updateActive((d) => ({
+      adjustments: { ...DEFAULT_ADJUSTMENTS, rotation: d.adjustments.rotation, ...next.adjustments },
+      presetId: id,
     }));
-    setPresetId(id);
   };
 
-  /** Snapshots the current image + edit state onto the undo stack before a destructive,
-   * pixel-baking operation (crop, remove background, upscale) replaces it. */
+  /** Snapshots the active document's image + edit state onto its undo stack before a
+   * destructive, pixel-baking operation (crop, remove background, upscale) replaces it. */
   const pushHistory = () => {
-    if (!image) return;
-    setHistory((h) => [...h, { image, imageSrc, adjustments, presetId }]);
+    if (!active) return;
+    const { image, imageSrc, adjustments, presetId } = active;
+    updateActive((d) => ({ history: [...d.history, { image, imageSrc, adjustments, presetId }] }));
   };
 
   const onUndo = () => {
-    setHistory((h) => {
-      if (h.length === 0) return h;
-      const last = h[h.length - 1];
-      setImage(last.image);
-      setImageSrc(last.imageSrc);
-      setAdjustments(last.adjustments);
-      setPresetId(last.presetId);
-      setCropMode(false);
-      setPendingCrop(null);
-      setZoom("fit");
-      return h.slice(0, -1);
-    });
+    if (!active || active.history.length === 0) return;
+    const last = active.history[active.history.length - 1];
+    updateActive((d) => ({
+      image: last.image,
+      imageSrc: last.imageSrc,
+      adjustments: last.adjustments,
+      presetId: last.presetId,
+      cropMode: false,
+      pendingCrop: null,
+      zoom: "fit",
+      history: d.history.slice(0, -1),
+    }));
   };
 
-  const handleFileChosen = async (file: File) => {
+  const handleFilesChosen = async (files: FileList | File[]) => {
     setError(null);
-    try {
-      const img = await loadImageFromFile(file);
-      setImage(img);
-      setImageSrc(img.src);
-      setOriginalFileSize(file.size);
-      setAdjustments(DEFAULT_ADJUSTMENTS);
-      setPresetId("none");
-      setPendingCrop(null);
-      setCropMode(false);
-      setHistory([]);
-      setZoom("fit");
-    } catch (e) {
-      setError((e as Error).message);
+    const newDocs: DocState[] = [];
+    for (const file of Array.from(files)) {
+      try {
+        const img = await loadImageFromFile(file);
+        newDocs.push({
+          id: newDocId(),
+          fileName: file.name,
+          image: img,
+          imageSrc: img.src,
+          adjustments: DEFAULT_ADJUSTMENTS,
+          presetId: "none",
+          history: [],
+          originalFileSize: file.size,
+          zoom: "fit",
+          cropMode: false,
+          pendingCrop: null,
+          aspectPreset: "free",
+          customRatio: { w: 4, h: 3 },
+        });
+      } catch (e) {
+        setError((e as Error).message);
+      }
     }
+    if (newDocs.length === 0) return;
+    setDocs((prev) => [...prev, ...newDocs]);
+    setActiveId(newDocs[newDocs.length - 1].id);
   };
 
   const onOpenClick = () => fileInputRef.current?.click();
 
   const onFileInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) handleFileChosen(file);
+    if (e.target.files && e.target.files.length > 0) handleFilesChosen(e.target.files);
     e.target.value = "";
   };
 
-  const aspectRatioValue = ratioForPreset(aspectPreset, customRatio);
+  /** Closes one tab and discards its unsaved edits (crop in progress, undo history)
+   * without touching disk. Falls back to a neighboring tab, or the empty state. */
+  const onCloseTab = (id: string) => {
+    const doc = docs.find((d) => d.id === id);
+    if (doc?.imageSrc.startsWith("blob:")) URL.revokeObjectURL(doc.imageSrc);
+
+    setDocs((prev) => {
+      const idx = prev.findIndex((d) => d.id === id);
+      const next = prev.filter((d) => d.id !== id);
+      if (activeId === id) {
+        const fallback = next[idx] ?? next[idx - 1] ?? null;
+        setActiveId(fallback ? fallback.id : null);
+      }
+      return next;
+    });
+    setError(null);
+    setSaveConfirmation(null);
+  };
+
+  const aspectRatioValue = active ? ratioForPreset(active.aspectPreset, active.customRatio) : null;
 
   const onToggleCropMode = () => {
-    setAspectPreset("free");
-    setPendingCrop(null);
-    setCropMode(true);
+    updateActive({ aspectPreset: "free", pendingCrop: null, cropMode: true });
   };
 
   const onApplyCrop = () => {
-    if (!image || !pendingCrop) {
-      setCropMode(false);
+    if (!active || !active.pendingCrop) {
+      updateActive({ cropMode: false });
       return;
     }
     pushHistory();
     const baked = renderToCanvas(
-      image,
-      image.naturalWidth,
-      image.naturalHeight,
+      active.image,
+      active.image.naturalWidth,
+      active.image.naturalHeight,
       DEFAULT_ADJUSTMENTS,
       undefined,
-      pendingCrop
+      active.pendingCrop
     );
     canvasToImage(baked).then((newImg) => {
-      setImage(newImg);
-      setImageSrc(newImg.src);
-      setCropMode(false);
-      setPendingCrop(null);
-      setZoom("fit");
+      updateActive({
+        image: newImg,
+        imageSrc: newImg.src,
+        cropMode: false,
+        pendingCrop: null,
+        zoom: "fit",
+      });
     });
   };
 
-  const onCancelCrop = () => {
-    setCropMode(false);
-    setPendingCrop(null);
-  };
+  const onCancelCrop = () => updateActive({ cropMode: false, pendingCrop: null });
 
   const onAspectPresetChange = (preset: AspectPreset) => {
-    setAspectPreset(preset);
-    if (!image) return;
-    setPendingCrop(cropForAspect(image.naturalWidth, image.naturalHeight, ratioForPreset(preset, customRatio)));
+    if (!active) return;
+    const rect = cropForAspect(active.image.naturalWidth, active.image.naturalHeight, ratioForPreset(preset, active.customRatio));
+    updateActive({ aspectPreset: preset, pendingCrop: rect });
   };
 
   const onCustomRatioChange = (next: CustomRatio) => {
-    setCustomRatio(next);
-    if (!image || aspectPreset !== "custom") return;
-    setPendingCrop(cropForAspect(image.naturalWidth, image.naturalHeight, ratioForPreset("custom", next)));
+    if (!active) return;
+    if (active.aspectPreset !== "custom") {
+      updateActive({ customRatio: next });
+      return;
+    }
+    const rect = cropForAspect(active.image.naturalWidth, active.image.naturalHeight, ratioForPreset("custom", next));
+    updateActive({ customRatio: next, pendingCrop: rect });
   };
 
   const onCropPxChange = (dimension: "width" | "height", value: number) => {
-    if (!image || !pendingCrop || !Number.isFinite(value)) return;
-    setPendingCrop(
-      resizeCropToPx(pendingCrop, image.naturalWidth, image.naturalHeight, aspectRatioValue, dimension, value)
+    if (!active || !active.pendingCrop || !Number.isFinite(value)) return;
+    const rect = resizeCropToPx(
+      active.pendingCrop,
+      active.image.naturalWidth,
+      active.image.naturalHeight,
+      aspectRatioValue,
+      dimension,
+      value
     );
+    updateActive({ pendingCrop: rect });
   };
 
-  const onReset = () => {
-    setAdjustments(DEFAULT_ADJUSTMENTS);
-    setPresetId("none");
-  };
+  const onReset = () => updateActive({ adjustments: DEFAULT_ADJUSTMENTS, presetId: "none" });
 
   const runAiOperation = useCallback(
     async (op: (canvas: HTMLCanvasElement) => Promise<HTMLCanvasElement>) => {
-      if (!image) return;
+      if (!active) return;
       pushHistory();
       setBusy(true);
       setError(null);
       try {
         const baked = renderToCanvas(
-          image,
-          image.naturalWidth,
-          image.naturalHeight,
-          adjustments,
+          active.image,
+          active.image.naturalWidth,
+          active.image.naturalHeight,
+          active.adjustments,
           preset.extraFilter,
           null
         );
         const result = await op(baked);
         const newImg = await canvasToImage(result);
-        setImage(newImg);
-        setImageSrc(newImg.src);
-        setAdjustments(DEFAULT_ADJUSTMENTS);
-        setPresetId("none");
-        setZoom("fit");
+        updateActive({
+          image: newImg,
+          imageSrc: newImg.src,
+          adjustments: DEFAULT_ADJUSTMENTS,
+          presetId: "none",
+          zoom: "fit",
+        });
       } catch (e) {
         setError((e as Error).message);
       } finally {
@@ -235,7 +304,7 @@ export default function App() {
         setBusyMessage("");
       }
     },
-    [image, imageSrc, adjustments, presetId, preset]
+    [active, preset, updateActive]
   );
 
   const onRemoveBackground = () =>
@@ -260,15 +329,15 @@ export default function App() {
   };
 
   const onExport = async (format: ExportFormat, quality: number, webOptimize: boolean) => {
-    if (!image) return;
+    if (!active) return;
     setSaving(true);
     setError(null);
     try {
       let baked = renderToCanvas(
-        image,
-        image.naturalWidth,
-        image.naturalHeight,
-        adjustments,
+        active.image,
+        active.image.naturalWidth,
+        active.image.naturalHeight,
+        active.adjustments,
         preset.extraFilter,
         null
       );
@@ -280,8 +349,8 @@ export default function App() {
       if (path === null) return; // user cancelled the save dialog
       setShowExport(false);
 
-      if (webOptimize && originalFileSize) {
-        const inKB = originalFileSize / 1024;
+      if (webOptimize && active.originalFileSize) {
+        const inKB = active.originalFileSize / 1024;
         const outKB = blob.size / 1024;
         const ahorro = (1 - outKB / inKB) * 100;
         showSaveConfirmation(
@@ -306,10 +375,13 @@ export default function App() {
         </div>
         <div className="button-row">
           <button onClick={onOpenClick}>Abrir imagen</button>
-          <button disabled={history.length === 0} onClick={onUndo}>
+          <button disabled={!active} onClick={() => active && onCloseTab(active.id)}>
+            Cerrar imagen
+          </button>
+          <button disabled={!active || active.history.length === 0} onClick={onUndo}>
             Deshacer
           </button>
-          <button className="primary" disabled={!image} onClick={() => setShowExport(true)}>
+          <button className="primary" disabled={!active} onClick={() => setShowExport(true)}>
             Exportar
           </button>
         </div>
@@ -317,32 +389,58 @@ export default function App() {
           ref={fileInputRef}
           type="file"
           accept="image/*"
+          multiple
           style={{ display: "none" }}
           onChange={onFileInputChange}
         />
       </header>
 
+      {docs.length > 0 && (
+        <div className="tab-bar">
+          {docs.map((d) => (
+            <div
+              key={d.id}
+              className={d.id === activeId ? "tab active" : "tab"}
+              onClick={() => setActiveId(d.id)}
+              title={d.fileName}
+            >
+              <span className="tab-label">{d.fileName}</span>
+              <button
+                className="tab-close"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onCloseTab(d.id);
+                }}
+                title="Cerrar"
+              >
+                ×
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
       <main className="main">
         <div
-          className={zoom !== "fit" && !cropMode ? "canvas-area zoomed" : "canvas-area"}
+          className={active && active.zoom !== "fit" && !active.cropMode ? "canvas-area zoomed" : "canvas-area"}
           onWheel={onCanvasWheel}
         >
           {error && <div className="error-banner">{error}</div>}
           {saveConfirmation && (
             <div className="success-banner">✓ {saveConfirmation}</div>
           )}
-          {image ? (
+          {active ? (
             <PreviewCanvas
-              imageSrc={imageSrc}
-              naturalWidth={image.naturalWidth}
-              naturalHeight={image.naturalHeight}
-              adjustments={adjustments}
+              imageSrc={active.imageSrc}
+              naturalWidth={active.image.naturalWidth}
+              naturalHeight={active.image.naturalHeight}
+              adjustments={active.adjustments}
               extraFilter={preset.extraFilter}
-              cropMode={cropMode}
-              crop={pendingCrop}
+              cropMode={active.cropMode}
+              crop={active.pendingCrop}
               cropAspectRatio={aspectRatioValue}
-              onCropChange={setPendingCrop}
-              zoom={zoom}
+              onCropChange={(r) => updateActive({ pendingCrop: r })}
+              zoom={active.zoom}
             />
           ) : (
             <div className="empty-state">
@@ -350,13 +448,13 @@ export default function App() {
               <button onClick={onOpenClick}>Abrir imagen</button>
             </div>
           )}
-          {image && !cropMode && (
+          {active && !active.cropMode && (
             <div className="zoom-toolbar">
               <button onClick={zoomOut} title="Alejar (Ctrl/Cmd + scroll)">
                 −
               </button>
               <button className="zoom-label" onClick={zoomToFit}>
-                {zoom === "fit" ? "Ajustar" : `${Math.round(zoom * 100)}%`}
+                {active.zoom === "fit" ? "Ajustar" : `${Math.round(active.zoom * 100)}%`}
               </button>
               <button onClick={zoomIn} title="Acercar (Ctrl/Cmd + scroll)">
                 +
@@ -366,21 +464,21 @@ export default function App() {
         </div>
 
         <Sidebar
-          adjustments={adjustments}
-          onAdjustmentsChange={setAdjustments}
-          presetId={presetId}
+          adjustments={active?.adjustments ?? DEFAULT_ADJUSTMENTS}
+          onAdjustmentsChange={(a) => updateActive({ adjustments: a })}
+          presetId={active?.presetId ?? "none"}
           onPresetChange={onPresetChange}
-          cropMode={cropMode}
+          cropMode={active?.cropMode ?? false}
           onToggleCropMode={onToggleCropMode}
           onApplyCrop={onApplyCrop}
           onCancelCrop={onCancelCrop}
-          aspectPreset={aspectPreset}
+          aspectPreset={active?.aspectPreset ?? "free"}
           onAspectPresetChange={onAspectPresetChange}
-          customRatio={customRatio}
+          customRatio={active?.customRatio ?? { w: 4, h: 3 }}
           onCustomRatioChange={onCustomRatioChange}
-          pendingCrop={pendingCrop}
+          pendingCrop={active?.pendingCrop ?? null}
           onCropPxChange={onCropPxChange}
-          hasImage={!!image}
+          hasImage={!!active}
           onSharpen={onSharpen}
           onRemoveBackground={onRemoveBackground}
           onUpscale={onUpscale}

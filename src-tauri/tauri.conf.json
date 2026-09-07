@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "photo-editor",
+  "productName": "Photofix",
   "version": "0.1.0",
   "identifier": "com.abelalazo.photo-editor",
   "build": {
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "Editor de Fotos",
+        "title": "Photofix",
         "width": 1280,
         "height": 840,
         "minWidth": 900,
