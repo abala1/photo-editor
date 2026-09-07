@@ -13,6 +13,7 @@ interface Props {
   extraFilter?: string;
   cropMode: boolean;
   crop: CropRect | null;
+  cropAspectRatio: number | null;
   onCropChange: (r: CropRect) => void;
   zoom: Zoom;
 }
@@ -25,6 +26,7 @@ export default function PreviewCanvas({
   extraFilter,
   cropMode,
   crop,
+  cropAspectRatio,
   onCropChange,
   zoom,
 }: Props) {
@@ -83,6 +85,7 @@ export default function PreviewCanvas({
             naturalWidth={naturalWidth}
             naturalHeight={naturalHeight}
             initialCrop={crop}
+            aspectRatio={cropAspectRatio}
             onChange={onCropChange}
           />
         )}

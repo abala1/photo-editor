@@ -9,9 +9,11 @@ import {
   ExportFormat,
   canvasToBlob,
   canvasToImage,
+  cropForAspect,
   loadImageFromFile,
   renderToCanvas,
   resizeCanvasToMaxSide,
+  resizeCropToPx,
   sharpenCanvas,
 } from "./lib/imageProcessing";
 import { removeBackground } from "./lib/ai/removeBackground";
@@ -25,6 +27,26 @@ interface HistoryEntry {
   presetId: string;
 }
 
+export type AspectPreset = "free" | "16:9" | "9:16" | "custom";
+
+export interface CustomRatio {
+  w: number;
+  h: number;
+}
+
+function ratioForPreset(preset: AspectPreset, custom: CustomRatio): number | null {
+  switch (preset) {
+    case "free":
+      return null;
+    case "16:9":
+      return 16 / 9;
+    case "9:16":
+      return 9 / 16;
+    case "custom":
+      return custom.w > 0 && custom.h > 0 ? custom.w / custom.h : null;
+  }
+}
+
 export default function App() {
   const [image, setImage] = useState<HTMLImageElement | null>(null);
   const [imageSrc, setImageSrc] = useState<string>("");
@@ -32,6 +54,8 @@ export default function App() {
   const [presetId, setPresetId] = useState("none");
   const [cropMode, setCropMode] = useState(false);
   const [pendingCrop, setPendingCrop] = useState<CropRect | null>(null);
+  const [aspectPreset, setAspectPreset] = useState<AspectPreset>("free");
+  const [customRatio, setCustomRatio] = useState<CustomRatio>({ w: 4, h: 3 });
   const [showExport, setShowExport] = useState(false);
   const [busy, setBusy] = useState(false);
   const [busyMessage, setBusyMessage] = useState("");
@@ -122,7 +146,10 @@ export default function App() {
     e.target.value = "";
   };
 
+  const aspectRatioValue = ratioForPreset(aspectPreset, customRatio);
+
   const onToggleCropMode = () => {
+    setAspectPreset("free");
     setPendingCrop(null);
     setCropMode(true);
   };
@@ -153,6 +180,25 @@ export default function App() {
   const onCancelCrop = () => {
     setCropMode(false);
     setPendingCrop(null);
+  };
+
+  const onAspectPresetChange = (preset: AspectPreset) => {
+    setAspectPreset(preset);
+    if (!image) return;
+    setPendingCrop(cropForAspect(image.naturalWidth, image.naturalHeight, ratioForPreset(preset, customRatio)));
+  };
+
+  const onCustomRatioChange = (next: CustomRatio) => {
+    setCustomRatio(next);
+    if (!image || aspectPreset !== "custom") return;
+    setPendingCrop(cropForAspect(image.naturalWidth, image.naturalHeight, ratioForPreset("custom", next)));
+  };
+
+  const onCropPxChange = (dimension: "width" | "height", value: number) => {
+    if (!image || !pendingCrop || !Number.isFinite(value)) return;
+    setPendingCrop(
+      resizeCropToPx(pendingCrop, image.naturalWidth, image.naturalHeight, aspectRatioValue, dimension, value)
+    );
   };
 
   const onReset = () => {
@@ -254,7 +300,10 @@ export default function App() {
   return (
     <div className="app">
       <header className="topbar">
-        <h1>Editor de Fotos</h1>
+        <div className="topbar-title">
+          <h1>Photofix</h1>
+          <span className="topbar-subtitle">by Abel Alazo</span>
+        </div>
         <div className="button-row">
           <button onClick={onOpenClick}>Abrir imagen</button>
           <button disabled={history.length === 0} onClick={onUndo}>
@@ -291,6 +340,7 @@ export default function App() {
               extraFilter={preset.extraFilter}
               cropMode={cropMode}
               crop={pendingCrop}
+              cropAspectRatio={aspectRatioValue}
               onCropChange={setPendingCrop}
               zoom={zoom}
             />
@@ -324,6 +374,12 @@ export default function App() {
           onToggleCropMode={onToggleCropMode}
           onApplyCrop={onApplyCrop}
           onCancelCrop={onCancelCrop}
+          aspectPreset={aspectPreset}
+          onAspectPresetChange={onAspectPresetChange}
+          customRatio={customRatio}
+          onCustomRatioChange={onCustomRatioChange}
+          pendingCrop={pendingCrop}
+          onCropPxChange={onCropPxChange}
           hasImage={!!image}
           onSharpen={onSharpen}
           onRemoveBackground={onRemoveBackground}

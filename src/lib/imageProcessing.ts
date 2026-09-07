@@ -8,6 +8,82 @@ export interface CropRect {
   height: number;
 }
 
+/** Largest centered rect matching `ratio` (width/height) that fits inside the image.
+ * `ratio: null` means free-form — returns the full image. */
+export function cropForAspect(
+  naturalWidth: number,
+  naturalHeight: number,
+  ratio: number | null
+): CropRect {
+  if (!ratio || !isFinite(ratio) || ratio <= 0) {
+    return { x: 0, y: 0, width: naturalWidth, height: naturalHeight };
+  }
+  const imageRatio = naturalWidth / naturalHeight;
+  let width: number;
+  let height: number;
+  if (imageRatio > ratio) {
+    height = naturalHeight;
+    width = Math.round(height * ratio);
+  } else {
+    width = naturalWidth;
+    height = Math.round(width / ratio);
+  }
+  return {
+    x: Math.round((naturalWidth - width) / 2),
+    y: Math.round((naturalHeight - height) / 2),
+    width,
+    height,
+  };
+}
+
+/** Resizes a crop rect to an exact pixel width/height, keeping it anchored at its
+ * current top-left and clamped inside the image bounds. When `ratio` is set the
+ * dimension not being edited is recomputed to preserve it. */
+export function resizeCropToPx(
+  crop: CropRect,
+  naturalWidth: number,
+  naturalHeight: number,
+  ratio: number | null,
+  dimension: "width" | "height",
+  value: number
+): CropRect {
+  let width = crop.width;
+  let height = crop.height;
+
+  if (dimension === "width") {
+    width = clampInt(value, 1, naturalWidth);
+    if (ratio) {
+      height = Math.round(width / ratio);
+      if (height > naturalHeight) {
+        // Requested width would need more height than the image has — clamp
+        // height instead and re-derive width from it so the ratio still holds.
+        height = naturalHeight;
+        width = clampInt(height * ratio, 1, naturalWidth);
+      }
+    }
+  } else {
+    height = clampInt(value, 1, naturalHeight);
+    if (ratio) {
+      width = Math.round(height * ratio);
+      if (width > naturalWidth) {
+        width = naturalWidth;
+        height = clampInt(width / ratio, 1, naturalHeight);
+      }
+    }
+  }
+
+  height = clampInt(height, 1, naturalHeight);
+  width = clampInt(width, 1, naturalWidth);
+
+  const x = clampInt(crop.x, 0, naturalWidth - width);
+  const y = clampInt(crop.y, 0, naturalHeight - height);
+  return { x, y, width, height };
+}
+
+function clampInt(v: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, Math.round(v)));
+}
+
 /** Renders the source image onto a fresh canvas applying rotation, crop and CSS filters, baked in as pixels. */
 export function renderToCanvas(
   source: CanvasImageSource,

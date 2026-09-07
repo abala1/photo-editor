@@ -1,4 +1,6 @@
+import { AspectPreset, CustomRatio } from "../App";
 import { Adjustments, PRESETS } from "../lib/filters";
+import { CropRect } from "../lib/imageProcessing";
 
 interface Props {
   adjustments: Adjustments;
@@ -9,6 +11,12 @@ interface Props {
   onToggleCropMode: () => void;
   onApplyCrop: () => void;
   onCancelCrop: () => void;
+  aspectPreset: AspectPreset;
+  onAspectPresetChange: (preset: AspectPreset) => void;
+  customRatio: CustomRatio;
+  onCustomRatioChange: (ratio: CustomRatio) => void;
+  pendingCrop: CropRect | null;
+  onCropPxChange: (dimension: "width" | "height", value: number) => void;
   hasImage: boolean;
   onSharpen: () => void;
   onRemoveBackground: () => void;
@@ -17,6 +25,13 @@ interface Props {
   busyMessage: string;
   onReset: () => void;
 }
+
+const ASPECT_PRESETS: { value: AspectPreset; label: string }[] = [
+  { value: "free", label: "Libre" },
+  { value: "16:9", label: "16:9" },
+  { value: "9:16", label: "9:16" },
+  { value: "custom", label: "Fijo" },
+];
 
 function Slider({
   label,
@@ -53,6 +68,12 @@ export default function Sidebar({
   onToggleCropMode,
   onApplyCrop,
   onCancelCrop,
+  aspectPreset,
+  onAspectPresetChange,
+  customRatio,
+  onCustomRatioChange,
+  pendingCrop,
+  onCropPxChange,
   hasImage,
   onSharpen,
   onRemoveBackground,
@@ -101,12 +122,69 @@ export default function Sidebar({
             Iniciar recorte
           </button>
         ) : (
-          <div className="button-row">
-            <button onClick={onApplyCrop}>Aplicar</button>
-            <button className="secondary" onClick={onCancelCrop}>
-              Cancelar
-            </button>
-          </div>
+          <>
+            <div className="button-row">
+              {ASPECT_PRESETS.map(({ value, label }) => (
+                <button
+                  key={value}
+                  className={value === aspectPreset ? "preset active" : "preset"}
+                  onClick={() => onAspectPresetChange(value)}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+
+            {aspectPreset === "custom" && (
+              <div className="ratio-inputs">
+                <input
+                  type="number"
+                  min={1}
+                  value={customRatio.w}
+                  onChange={(e) => onCustomRatioChange({ ...customRatio, w: Number(e.target.value) })}
+                  aria-label="Proporción ancho"
+                />
+                <span>:</span>
+                <input
+                  type="number"
+                  min={1}
+                  value={customRatio.h}
+                  onChange={(e) => onCustomRatioChange({ ...customRatio, h: Number(e.target.value) })}
+                  aria-label="Proporción alto"
+                />
+              </div>
+            )}
+
+            {pendingCrop && (
+              <div className="px-inputs">
+                <label>
+                  <span>Ancho (px)</span>
+                  <input
+                    type="number"
+                    min={1}
+                    value={pendingCrop.width}
+                    onChange={(e) => onCropPxChange("width", Number(e.target.value))}
+                  />
+                </label>
+                <label>
+                  <span>Alto (px)</span>
+                  <input
+                    type="number"
+                    min={1}
+                    value={pendingCrop.height}
+                    onChange={(e) => onCropPxChange("height", Number(e.target.value))}
+                  />
+                </label>
+              </div>
+            )}
+
+            <div className="button-row">
+              <button onClick={onApplyCrop}>Aplicar</button>
+              <button className="secondary" onClick={onCancelCrop}>
+                Cancelar
+              </button>
+            </div>
+          </>
         )}
       </section>
 
