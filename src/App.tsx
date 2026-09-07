@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import "./App.css";
 import Sidebar from "./components/Sidebar";
 import PreviewCanvas, { Zoom } from "./components/PreviewCanvas";
@@ -75,6 +75,7 @@ export default function App() {
   const [docs, setDocs] = useState<DocState[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [showExport, setShowExport] = useState(false);
+  const [fullscreen, setFullscreen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [busyMessage, setBusyMessage] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -108,6 +109,7 @@ export default function App() {
   const zoomOut = () =>
     updateActive((d) => ({ zoom: d.zoom === "fit" ? 1 : Math.max(ZOOM_MIN, d.zoom / 1.25) }));
   const zoomToFit = () => updateActive({ zoom: "fit" });
+  const zoomTo100 = () => updateActive({ zoom: 1 });
 
   const onCanvasWheel = (e: React.WheelEvent) => {
     if (!(e.ctrlKey || e.metaKey) || !active || active.cropMode) return;
@@ -208,6 +210,34 @@ export default function App() {
     setError(null);
     setSaveConfirmation(null);
   };
+
+  /** Hides the canvas for this tab without discarding it — the tab stays in the
+   * bar and clicking it again restores the view, same idea as minimizing a window. */
+  const onMinimizeTab = (id: string) => {
+    if (activeId !== id) return;
+    setActiveId(null);
+    setFullscreen(false);
+  };
+
+  /** Makes this tab's canvas fill the whole app window, hiding the topbar, tab
+   * bar and sidebar. Clicking the same tab's green dot again (or Esc) exits. */
+  const onToggleFullscreenTab = (id: string) => {
+    if (activeId === id) {
+      setFullscreen((f) => !f);
+    } else {
+      setActiveId(id);
+      setFullscreen(true);
+    }
+  };
+
+  useEffect(() => {
+    if (!fullscreen) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setFullscreen(false);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [fullscreen]);
 
   const aspectRatioValue = active ? ratioForPreset(active.aspectPreset, active.customRatio) : null;
 
@@ -368,34 +398,36 @@ export default function App() {
 
   return (
     <div className="app">
-      <header className="topbar">
-        <div className="topbar-title">
-          <h1>Photofix</h1>
-          <span className="topbar-subtitle">by Abel Alazo</span>
-        </div>
-        <div className="button-row">
-          <button onClick={onOpenClick}>Abrir imagen</button>
-          <button disabled={!active} onClick={() => active && onCloseTab(active.id)}>
-            Cerrar imagen
-          </button>
-          <button disabled={!active || active.history.length === 0} onClick={onUndo}>
-            Deshacer
-          </button>
-          <button className="primary" disabled={!active} onClick={() => setShowExport(true)}>
-            Exportar
-          </button>
-        </div>
-        <input
-          ref={fileInputRef}
-          type="file"
-          accept="image/*"
-          multiple
-          style={{ display: "none" }}
-          onChange={onFileInputChange}
-        />
-      </header>
+      {!fullscreen && (
+        <header className="topbar">
+          <div className="topbar-title">
+            <h1>Photofix</h1>
+            <span className="topbar-subtitle">by Abel Alazo</span>
+          </div>
+          <div className="button-row">
+            <button onClick={onOpenClick}>Abrir imagen</button>
+            <button disabled={!active} onClick={() => active && onCloseTab(active.id)}>
+              Cerrar imagen
+            </button>
+            <button disabled={!active || active.history.length === 0} onClick={onUndo}>
+              Deshacer
+            </button>
+            <button className="primary" disabled={!active} onClick={() => setShowExport(true)}>
+              Exportar
+            </button>
+          </div>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/*"
+            multiple
+            style={{ display: "none" }}
+            onChange={onFileInputChange}
+          />
+        </header>
+      )}
 
-      {docs.length > 0 && (
+      {!fullscreen && docs.length > 0 && (
         <div className="tab-bar">
           {docs.map((d) => (
             <div
@@ -404,20 +436,42 @@ export default function App() {
               onClick={() => setActiveId(d.id)}
               title={d.fileName}
             >
+              <span className="tab-dots">
+                <button
+                  className="tab-dot dot-close"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onCloseTab(d.id);
+                  }}
+                  title="Cerrar"
+                />
+                <button
+                  className="tab-dot dot-minimize"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onMinimizeTab(d.id);
+                  }}
+                  title="Minimizar"
+                />
+                <button
+                  className="tab-dot dot-fullscreen"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onToggleFullscreenTab(d.id);
+                  }}
+                  title="Pantalla completa"
+                />
+              </span>
               <span className="tab-label">{d.fileName}</span>
-              <button
-                className="tab-close"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onCloseTab(d.id);
-                }}
-                title="Cerrar"
-              >
-                ×
-              </button>
             </div>
           ))}
         </div>
+      )}
+
+      {fullscreen && (
+        <button className="fullscreen-exit" onClick={() => setFullscreen(false)} title="Salir de pantalla completa (Esc)">
+          ✕ Salir de pantalla completa
+        </button>
       )}
 
       <main className="main">
@@ -453,8 +507,12 @@ export default function App() {
               <button onClick={zoomOut} title="Alejar (Ctrl/Cmd + scroll)">
                 −
               </button>
-              <button className="zoom-label" onClick={zoomToFit}>
-                {active.zoom === "fit" ? "Ajustar" : `${Math.round(active.zoom * 100)}%`}
+              <button
+                className="zoom-label"
+                onClick={() => (active.zoom === "fit" ? zoomTo100() : zoomToFit())}
+                title={active.zoom === "fit" ? "Ver a tamaño real (100%)" : "Ajustar a la ventana"}
+              >
+                {active.zoom === "fit" ? "Zoom" : `${Math.round(active.zoom * 100)}%`}
               </button>
               <button onClick={zoomIn} title="Acercar (Ctrl/Cmd + scroll)">
                 +
@@ -463,29 +521,31 @@ export default function App() {
           )}
         </div>
 
-        <Sidebar
-          adjustments={active?.adjustments ?? DEFAULT_ADJUSTMENTS}
-          onAdjustmentsChange={(a) => updateActive({ adjustments: a })}
-          presetId={active?.presetId ?? "none"}
-          onPresetChange={onPresetChange}
-          cropMode={active?.cropMode ?? false}
-          onToggleCropMode={onToggleCropMode}
-          onApplyCrop={onApplyCrop}
-          onCancelCrop={onCancelCrop}
-          aspectPreset={active?.aspectPreset ?? "free"}
-          onAspectPresetChange={onAspectPresetChange}
-          customRatio={active?.customRatio ?? { w: 4, h: 3 }}
-          onCustomRatioChange={onCustomRatioChange}
-          pendingCrop={active?.pendingCrop ?? null}
-          onCropPxChange={onCropPxChange}
-          hasImage={!!active}
-          onSharpen={onSharpen}
-          onRemoveBackground={onRemoveBackground}
-          onUpscale={onUpscale}
-          busy={busy}
-          busyMessage={busyMessage}
-          onReset={onReset}
-        />
+        {!fullscreen && (
+          <Sidebar
+            adjustments={active?.adjustments ?? DEFAULT_ADJUSTMENTS}
+            onAdjustmentsChange={(a) => updateActive({ adjustments: a })}
+            presetId={active?.presetId ?? "none"}
+            onPresetChange={onPresetChange}
+            cropMode={active?.cropMode ?? false}
+            onToggleCropMode={onToggleCropMode}
+            onApplyCrop={onApplyCrop}
+            onCancelCrop={onCancelCrop}
+            aspectPreset={active?.aspectPreset ?? "free"}
+            onAspectPresetChange={onAspectPresetChange}
+            customRatio={active?.customRatio ?? { w: 4, h: 3 }}
+            onCustomRatioChange={onCustomRatioChange}
+            pendingCrop={active?.pendingCrop ?? null}
+            onCropPxChange={onCropPxChange}
+            hasImage={!!active}
+            onSharpen={onSharpen}
+            onRemoveBackground={onRemoveBackground}
+            onUpscale={onUpscale}
+            busy={busy}
+            busyMessage={busyMessage}
+            onReset={onReset}
+          />
+        )}
       </main>
 
       {showExport && (
