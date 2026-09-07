@@ -62,6 +62,26 @@ export function renderToCanvas(
   return canvas;
 }
 
+/** Escala el canvas para que su lado más largo mida exactamente maxSide,
+ * preservando la proporción (misma regla que usa WebPify). */
+export function resizeCanvasToMaxSide(
+  canvas: HTMLCanvasElement,
+  maxSide: number
+): HTMLCanvasElement {
+  const { width, height } = canvas;
+  const scale = width >= height ? maxSide / width : maxSide / height;
+  const outWidth = Math.round(width * scale);
+  const outHeight = Math.round(height * scale);
+
+  const out = document.createElement("canvas");
+  out.width = outWidth;
+  out.height = outHeight;
+  const ctx = out.getContext("2d");
+  if (!ctx) throw new Error("No se pudo crear el contexto de canvas");
+  ctx.drawImage(canvas, 0, 0, outWidth, outHeight);
+  return out;
+}
+
 export type ExportFormat = "png" | "jpeg" | "webp";
 
 export function canvasToBlob(

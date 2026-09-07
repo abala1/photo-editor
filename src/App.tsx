@@ -11,6 +11,7 @@ import {
   canvasToImage,
   loadImageFromFile,
   renderToCanvas,
+  resizeCanvasToMaxSide,
   sharpenCanvas,
 } from "./lib/imageProcessing";
 import { removeBackground } from "./lib/ai/removeBackground";
@@ -38,6 +39,7 @@ export default function App() {
   const [history, setHistory] = useState<HistoryEntry[]>([]);
   const [saveConfirmation, setSaveConfirmation] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [originalFileSize, setOriginalFileSize] = useState<number | null>(null);
   const [zoom, setZoom] = useState<Zoom>("fit");
 
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -100,6 +102,7 @@ export default function App() {
       const img = await loadImageFromFile(file);
       setImage(img);
       setImageSrc(img.src);
+      setOriginalFileSize(file.size);
       setAdjustments(DEFAULT_ADJUSTMENTS);
       setPresetId("none");
       setPendingCrop(null);
@@ -210,12 +213,12 @@ export default function App() {
     saveConfirmationTimeout.current = setTimeout(() => setSaveConfirmation(null), 5000);
   };
 
-  const onExport = async (format: ExportFormat, quality: number) => {
+  const onExport = async (format: ExportFormat, quality: number, webOptimize: boolean) => {
     if (!image) return;
     setSaving(true);
     setError(null);
     try {
-      const baked = renderToCanvas(
+      let baked = renderToCanvas(
         image,
         image.naturalWidth,
         image.naturalHeight,
@@ -223,11 +226,24 @@ export default function App() {
         preset.extraFilter,
         null
       );
+      if (webOptimize) {
+        baked = resizeCanvasToMaxSide(baked, 1200);
+      }
       const blob = await canvasToBlob(baked, format, quality);
       const { path } = await saveImage(blob, format);
       if (path === null) return; // user cancelled the save dialog
       setShowExport(false);
-      showSaveConfirmation(`Imagen guardada: ${path}`);
+
+      if (webOptimize && originalFileSize) {
+        const inKB = originalFileSize / 1024;
+        const outKB = blob.size / 1024;
+        const ahorro = (1 - outKB / inKB) * 100;
+        showSaveConfirmation(
+          `Imagen guardada: ${path} · ${inKB.toFixed(0)}KB → ${outKB.toFixed(0)}KB (${ahorro.toFixed(0)}% menos)`
+        );
+      } else {
+        showSaveConfirmation(`Imagen guardada: ${path}`);
+      }
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -244,7 +260,7 @@ export default function App() {
           <button disabled={history.length === 0} onClick={onUndo}>
             Deshacer
           </button>
-          <button disabled={!image} onClick={() => setShowExport(true)}>
+          <button className="primary" disabled={!image} onClick={() => setShowExport(true)}>
             Exportar
           </button>
         </div>
